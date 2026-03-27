@@ -1,0 +1,399 @@
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Post,
+  Res,
+} from "@nestjs/common"
+import type { Response } from "express"
+import { AgentAuthStateService } from "./agent-auth-state.service"
+import { Public } from "./public.decorator"
+
+@Controller()
+export class SetupController {
+  constructor(private readonly authState: AgentAuthStateService) {}
+
+  @Public()
+  @Get("setup")
+  async setupPage(@Res() res: Response) {
+    const status = await this.authState.getRotationState()
+    const isLocked = status === "paired"
+    res.status(isLocked ? 403 : 200)
+    res.setHeader("Content-Type", "text/html; charset=utf-8")
+    res.send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DockSentinel Agent Setup</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: linear-gradient(135deg, #f6f8fb 0%, #edf2f7 100%);
+        color: #132238;
+      }
+      main {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 40px 20px 56px;
+      }
+      .panel {
+        border: 1px solid rgba(19, 34, 56, 0.12);
+        border-radius: 28px;
+        background: rgba(255, 255, 255, 0.94);
+        box-shadow: 0 24px 80px -40px rgba(10, 22, 40, 0.4);
+        padding: 28px;
+      }
+      .eyebrow {
+        display: inline-flex;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(36, 96, 164, 0.1);
+        color: #2460a4;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 14px 0 10px;
+        font-size: 34px;
+        line-height: 1.08;
+      }
+      p {
+        margin: 0;
+        line-height: 1.6;
+        color: #4f6177;
+      }
+      .status {
+        margin-top: 22px;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        background: #eef5ff;
+        color: #1f4f87;
+        font-weight: 600;
+      }
+      form {
+        margin-top: 28px;
+        display: grid;
+        gap: 14px;
+      }
+      label {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid rgba(19, 34, 56, 0.18);
+        border-radius: 18px;
+        padding: 14px 16px;
+        font-size: 15px;
+        outline: none;
+      }
+      input:focus {
+        border-color: #2460a4;
+        box-shadow: 0 0 0 4px rgba(36, 96, 164, 0.14);
+      }
+      button {
+        border: 0;
+        border-radius: 18px;
+        padding: 14px 18px;
+        background: linear-gradient(135deg, #1f4f87 0%, #2460a4 100%);
+        color: white;
+        font-size: 15px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+      .hint {
+        margin-top: 20px;
+        font-size: 14px;
+        color: #64748b;
+      }
+      .result {
+        margin-top: 16px;
+        min-height: 22px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .result.error {
+        color: #b42318;
+      }
+      .result.success {
+        color: #157347;
+      }
+      .notice {
+        margin-top: 24px;
+        padding: 18px 20px;
+        border-radius: 22px;
+        border: 1px solid rgba(19, 34, 56, 0.12);
+        background: rgba(255, 255, 255, 0.9);
+      }
+      .notice h2 {
+        margin: 0 0 8px;
+        font-size: 20px;
+      }
+      .notice.success {
+        border-color: rgba(21, 115, 71, 0.22);
+        background: rgba(21, 115, 71, 0.08);
+      }
+      .notice.waiting {
+        border-color: rgba(36, 96, 164, 0.2);
+        background: rgba(36, 96, 164, 0.08);
+      }
+      .notice p + p {
+        margin-top: 8px;
+      }
+      .hidden {
+        display: none !important;
+      }
+      .spinner {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        border: 2px solid rgba(36, 96, 164, 0.18);
+        border-top-color: #2460a4;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .locked {
+        margin-top: 28px;
+        padding: 18px 20px;
+        border-radius: 22px;
+        background: rgba(180, 35, 24, 0.08);
+        border: 1px solid rgba(180, 35, 24, 0.18);
+      }
+      .locked h2 {
+        margin: 0 0 10px;
+        font-size: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="panel">
+        <div class="eyebrow">DockSentinel Agent</div>
+        <h1>Local token setup</h1>
+        <p>
+          Paste the temporary bootstrap token generated by the main DockSentinel app.
+          This page is available only while the agent is waiting for setup or rotation.
+        </p>
+        <div class="status">Current state: <span id="state">${status}</span></div>
+
+        ${
+          isLocked
+            ? `
+        <div class="locked">
+          <h2>Agent already paired</h2>
+          <p>
+            This agent is already paired with DockSentinel and is no longer accepting a new setup token.
+            Start a token rotation from the main DockSentinel app to reopen this page.
+          </p>
+        </div>`
+            : `
+        <div id="waiting-notice" class="notice waiting hidden" aria-live="polite">
+          <h2 id="waiting-title">Waiting for DockSentinel</h2>
+          <p id="waiting-body">
+            Keep this tab open while the main DockSentinel app completes the connection.
+          </p>
+          <p class="hint">This page will update automatically as soon as the connection is established.</p>
+        </div>
+
+        <div id="success-notice" class="notice success hidden" aria-live="polite">
+          <h2>Connection established</h2>
+          <p>
+            The agent is now connected to the main DockSentinel app.
+          </p>
+          <p>You can close this tab or window now and return to DockSentinel.</p>
+        </div>
+
+        <form id="token-form">
+          <div>
+            <label for="token">Bootstrap token</label>
+            <input id="token" name="token" type="password" autocomplete="off" placeholder="dsa_..." required />
+          </div>
+          <button id="submit" type="submit">Save token</button>
+        </form>
+
+        <div id="result" class="result"></div>
+        <div class="hint">
+          After saving the token, return to the main DockSentinel app and wait for the
+          automatic completion or click <strong>Complete setup</strong>.
+        </div>`
+        }
+      </section>
+    </main>
+    <script>
+      const isLocked = ${isLocked ? "true" : "false"};
+      const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+      if (hash) {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+
+      if (!isLocked) {
+        const form = document.getElementById("token-form");
+        const state = document.getElementById("state");
+        const result = document.getElementById("result");
+        const submit = document.getElementById("submit");
+        const tokenField = document.getElementById("token");
+        const waitingNotice = document.getElementById("waiting-notice");
+        const waitingTitle = document.getElementById("waiting-title");
+        const waitingBody = document.getElementById("waiting-body");
+        const successNotice = document.getElementById("success-notice");
+        let pollId = null;
+
+        const hideManualEntry = () => {
+          form.classList.add("hidden");
+          result.classList.add("hidden");
+        };
+
+        const showManualEntry = () => {
+          form.classList.remove("hidden");
+          result.classList.remove("hidden");
+          waitingNotice.classList.add("hidden");
+          successNotice.classList.add("hidden");
+        };
+
+        const showWaiting = (title, body) => {
+          hideManualEntry();
+          successNotice.classList.add("hidden");
+          waitingTitle.textContent = title;
+          waitingBody.textContent = body;
+          waitingNotice.classList.remove("hidden");
+        };
+
+        const showConnected = () => {
+          hideManualEntry();
+          waitingNotice.classList.add("hidden");
+          successNotice.classList.remove("hidden");
+          result.textContent = "";
+          result.className = "result hidden";
+        };
+
+        const startPollingConnection = () => {
+          if (pollId) return;
+          pollId = window.setInterval(async () => {
+            try {
+              const response = await fetch("/agent/v1/setup/status", { cache: "no-store" });
+              const data = await response.json().catch(() => ({}));
+              if (!response.ok) {
+                throw new Error(data.message || "Could not read setup status");
+              }
+
+              state.textContent = data.state || state.textContent;
+              if (data.state === "paired") {
+                window.clearInterval(pollId);
+                pollId = null;
+                showConnected();
+              }
+            } catch {
+              // Ignore transient polling errors and keep waiting.
+            }
+          }, 2000);
+        };
+
+        const saveToken = async (token, waitingTitle, waitingBody) => {
+          result.textContent = "";
+          result.className = "result";
+          submit.disabled = true;
+
+          try {
+            const response = await fetch("/agent/v1/setup/token", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ token }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              throw new Error(data.message || "Could not save token");
+            }
+            state.textContent = data.state || "ready_to_complete";
+            tokenField.value = "";
+            showWaiting(waitingTitle, waitingBody);
+            startPollingConnection();
+          } catch (error) {
+            showManualEntry();
+            result.textContent = error instanceof Error ? error.message : String(error);
+            result.classList.add("error");
+          } finally {
+            submit.disabled = false;
+          }
+        };
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const token = tokenField.value.trim();
+          await saveToken(
+            token,
+            "Token saved successfully",
+            "The bootstrap token was saved on this agent. Keep this tab open while the main DockSentinel app finishes the connection automatically.",
+          );
+        });
+
+        const fragmentToken = new URLSearchParams(hash).get("bootstrapToken");
+        if (fragmentToken) {
+          showWaiting(
+            "Importing token automatically",
+            "The bootstrap token was passed by DockSentinel. Waiting for the agent to save it before the main app completes the connection.",
+          );
+          void saveToken(
+            fragmentToken,
+            "Bootstrap token imported successfully",
+            "The bootstrap token was imported successfully. Keep this tab open while the main DockSentinel app finishes the connection automatically.",
+          );
+        } else if (state.textContent === "ready_to_complete") {
+          showWaiting(
+            "Waiting for DockSentinel",
+            "The bootstrap token is already stored on this agent. Keep this tab open while the main DockSentinel app completes the connection.",
+          );
+          startPollingConnection();
+        } else if (state.textContent === "pending_rotation") {
+          showManualEntry();
+        } else if (state.textContent === "unpaired") {
+          showManualEntry();
+        }
+      }
+    </script>
+  </body>
+</html>`)
+  }
+
+  @Public()
+  @Get("agent/v1/setup/status")
+  async setupStatus() {
+    return this.authState.getStatus()
+  }
+
+  @Public()
+  @Post("agent/v1/setup/token")
+  async saveSetupToken(@Body("token") token?: string) {
+    const value = token?.trim()
+    if (!value) {
+      throw new BadRequestException("token is required")
+    }
+
+    const state = await this.authState.saveBootstrapToken(value)
+    return {
+      ok: true as const,
+      state,
+    }
+  }
+}
