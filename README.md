@@ -19,7 +19,7 @@ docker run -d \
   -e PORT=45873 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /opt/docksentinel-agent:/var/lib/docksentinel-agent \
-  leufrasiojunior/docksentinel-agent:latest
+  leufrasiojunior/docksentinelagent:latest
 ```
 
 ## Desenvolvimento
