@@ -11,11 +11,12 @@ permissions:
 jobs:
   docker:
     runs-on: ubuntu-latest
-    environment: ci-ds
+    environment: ds-agent
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Necessario para builds multi-arch (amd64/arm64)
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -34,15 +35,19 @@ jobs:
         run: |
           echo "value=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
 
-      - name: Docker meta
-        id: meta
+      # Gera tags Docker a partir da tag Git (SemVer)
+      - name: Docker meta (agent)
+        id: meta_agent
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/docksentinel-agent
+          images: leufrasiojunior/docksentinelagent
           tags: |
+            # v0.1.0        -> 0.1.0, 0.1, 0
+            # v0.1.0-beta.1 -> 0.1.0-beta.1 (apenas full)
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+
             type=sha,format=short,prefix=sha-
 
       - name: Add channel tags (latest/alpha/beta)
@@ -50,19 +55,19 @@ jobs:
         shell: bash
         run: |
           REF="${GITHUB_REF_NAME}"
-          EXTRA=""
+          AGENT_EXTRA=""
           if [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            EXTRA="${{ secrets.DOCKERHUB_USERNAME }}/docksentinel-agent:latest"
+            AGENT_EXTRA="leufrasiojunior/docksentinelagent:latest"
           fi
           if [[ "$REF" == *"-alpha."* ]]; then
-            EXTRA="${{ secrets.DOCKERHUB_USERNAME }}/docksentinel-agent:alpha"
+            AGENT_EXTRA="leufrasiojunior/docksentinelagent:alpha"
           fi
           if [[ "$REF" == *"-beta."* ]]; then
-            EXTRA="${{ secrets.DOCKERHUB_USERNAME }}/docksentinel-agent:beta"
+            AGENT_EXTRA="leufrasiojunior/docksentinelagent:beta"
           fi
 
-          echo "extra_tags<<EOF" >> $GITHUB_OUTPUT
-          echo "$EXTRA" >> $GITHUB_OUTPUT
+          echo "agent_extra_tags<<EOF" >> $GITHUB_OUTPUT
+          echo "$AGENT_EXTRA" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Build and push agent (multi-arch)
@@ -75,8 +80,8 @@ jobs:
           build-args: |
             APP_VERSION=${{ steps.version.outputs.value }}
           tags: |
-            ${{ steps.meta.outputs.tags }}
-            ${{ steps.channel.outputs.extra_tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+            ${{ steps.meta_agent.outputs.tags }}
+            ${{ steps.channel.outputs.agent_extra_tags }}
+          labels: ${{ steps.meta_agent.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
