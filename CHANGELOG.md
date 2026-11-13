@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/leufrasiojunior/DockSentinelAgent/compare/v0.2.1...v0.3.0) (2026-11-13)
+
+
+### Features
+
+* **docker:** detect local-only images, support registry auth and cache digests ([7a2a63b](https://github.com/leufrasiojunior/DockSentinelAgent/commit/7a2a63b57b223b17e09f168e02b3f6d2587ae6fc))
+* **docker:** detect local-only images, support registry auth and cache digests ([2a1275f](https://github.com/leufrasiojunior/DockSentinelAgent/commit/2a1275f518b2f69d49ffffedd57499edc75c9f74))
+
 ## [0.2.1](https://github.com/leufrasiojunior/DockSentinelAgent/compare/v0.2.0...v0.2.1) (2026-03-27)
 
 
