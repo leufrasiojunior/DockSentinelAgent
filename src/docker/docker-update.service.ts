@@ -3,6 +3,10 @@ import Docker from "dockerode"
 import type { ContainerCreateOptions } from "dockerode"
 import { DOCKER_CLIENT } from "./docker.constants"
 import { DockerDigestService } from "./docker-digest.service"
+import {
+  type RegistryAuthEntry,
+  matchRegistryAuth,
+} from "./registry-auth.util"
 
 type PortBinding = { HostPort?: string }
 type PortBindings = Record<string, Array<PortBinding> | null>
@@ -12,7 +16,9 @@ type ProgressEvent = { status?: string; id?: string; progress?: string }
 type ErrorWithStatus = { statusCode?: number; status?: number; message?: string }
 
 export type ContainerUpdateCheckReason =
+  | "local_only"
   | "registry_auth_required"
+  | "registry_rate_limited"
   | "remote_digest_error"
   | "remote_digest_not_found"
   | "local_image_missing"
@@ -110,52 +116,14 @@ export class DockerUpdateService {
     return { ok: false, reason: "timeout" }
   }
 
-  async canUpdateContainer(containerName: string): Promise<ContainerUpdateCheck> {
+  async canUpdateContainer(
+    containerName: string,
+    authEntries?: RegistryAuthEntry[],
+  ): Promise<ContainerUpdateCheck> {
     const container = this.docker.getContainer(containerName)
     const inspect = await container.inspect()
     const imageRef = inspect?.Config?.Image as string
     const localImageId = inspect?.Image as string
-
-    let remoteDigest: string | null = null
-    try {
-      remoteDigest = await this.digests.getRemoteDigest(imageRef)
-    } catch (error: unknown) {
-      const status = this.getErrorStatus(error)
-      if (status === 401 || status === 403) {
-        return {
-          container: containerName,
-          imageRef,
-          localImageId,
-          canCheckRemote: false,
-          canCheckLocal: true,
-          hasUpdate: false,
-          reason: "registry_auth_required",
-        }
-      }
-
-      return {
-        container: containerName,
-        imageRef,
-        localImageId,
-        canCheckRemote: false,
-        canCheckLocal: true,
-        hasUpdate: false,
-        reason: "remote_digest_error",
-        error: this.getErrorMessage(error),
-      }
-    }
-
-    if (!remoteDigest) {
-      return {
-        container: containerName,
-        imageRef,
-        localImageId,
-        canCheckRemote: false,
-        canCheckLocal: true,
-        hasUpdate: false,
-        reason: "remote_digest_not_found",
-      }
-    }
 
     let repoDigests: string[] = []
     try {
@@ -169,9 +137,8 @@ export class DockerUpdateService {
           container: containerName,
           imageRef,
           localImageId,
-          remoteDigest,
           repoDigests: [],
-          canCheckRemote: true,
+          canCheckRemote: false,
           canCheckLocal: false,
           hasUpdate: false,
           reason: "local_image_missing",
@@ -182,9 +149,8 @@ export class DockerUpdateService {
         container: containerName,
         imageRef,
         localImageId,
-        remoteDigest,
         repoDigests: [],
-        canCheckRemote: true,
+        canCheckRemote: false,
         canCheckLocal: false,
         hasUpdate: false,
         reason: "local_digest_error",
@@ -192,17 +158,81 @@ export class DockerUpdateService {
       }
     }
 
+    // Local-only images (built locally, never pushed/pulled from a registry) have no RepoDigests.
+    // Return immediately without hitting any remote registry.
     if (!repoDigests.length) {
       return {
         container: containerName,
         imageRef,
         localImageId,
-        remoteDigest,
         repoDigests: [],
-        canCheckRemote: true,
-        canCheckLocal: false,
+        canCheckRemote: false,
+        canCheckLocal: true,
         hasUpdate: false,
-        reason: "local_repo_digests_empty",
+        reason: "local_only",
+      }
+    }
+
+    const authConfig = matchRegistryAuth(imageRef, authEntries)
+    let remoteDigest: string | null = null
+    try {
+      remoteDigest = await this.digests.getRemoteDigest(imageRef, authConfig)
+    } catch (error: unknown) {
+      const status = this.getErrorStatus(error)
+      const errMsg = this.getErrorMessage(error)
+      if (status === 401 || status === 403) {
+        return {
+          container: containerName,
+          imageRef,
+          localImageId,
+          repoDigests,
+          canCheckRemote: false,
+          canCheckLocal: true,
+          hasUpdate: false,
+          reason: "registry_auth_required",
+        }
+      }
+
+      if (
+        status === 429 ||
+        /toomanyrequests|too many requests|rate limit/i.test(errMsg)
+      ) {
+        return {
+          container: containerName,
+          imageRef,
+          localImageId,
+          repoDigests,
+          canCheckRemote: false,
+          canCheckLocal: true,
+          hasUpdate: false,
+          reason: "registry_rate_limited",
+          error: "Limite de requisições atingido no registry (HTTP 429)",
+        }
+      }
+
+      return {
+        container: containerName,
+        imageRef,
+        localImageId,
+        repoDigests,
+        canCheckRemote: false,
+        canCheckLocal: true,
+        hasUpdate: false,
+        reason: "remote_digest_error",
+        error: errMsg,
+      }
+    }
+
+    if (!remoteDigest) {
+      return {
+        container: containerName,
+        imageRef,
+        localImageId,
+        repoDigests,
+        canCheckRemote: false,
+        canCheckLocal: true,
+        hasUpdate: false,
+        reason: "remote_digest_not_found",
       }
     }
 
@@ -219,9 +249,16 @@ export class DockerUpdateService {
     }
   }
 
-  async pullImage(imageRef: string): Promise<PullResult> {
+  async pullImage(
+    imageRef: string,
+    authEntries?: RegistryAuthEntry[],
+  ): Promise<PullResult> {
     this.logger.log(`Pulling image: ${imageRef}`)
-    const stream = await this.docker.pull(imageRef)
+    const authconfig = matchRegistryAuth(imageRef, authEntries)
+    const stream = await this.docker.pull(
+      imageRef,
+      authconfig ? { authconfig } : {},
+    )
 
     await new Promise<void>((resolve, reject) => {
       this.docker.modem.followProgress(
@@ -236,6 +273,8 @@ export class DockerUpdateService {
         },
       )
     })
+
+    this.digests.invalidate(imageRef)
 
     let pulledImageId: string | undefined
     try {
@@ -256,10 +295,16 @@ export class DockerUpdateService {
   async recreateContainerWithImage(
     containerName: string,
     targetImage: string,
-    opts?: { force?: boolean; pull?: boolean },
+    opts?: {
+      force?: boolean
+      pull?: boolean
+      authEntries?: RegistryAuthEntry[]
+    },
   ): Promise<ContainerUpdateResult> {
     const pullInfo: PullInfo =
-      opts?.pull ?? true ? await this.pullImage(targetImage) : { skipped: true }
+      opts?.pull ?? true
+        ? await this.pullImage(targetImage, opts?.authEntries)
+        : { skipped: true }
 
     const current = this.docker.getContainer(containerName)
     const inspect = await current.inspect()
