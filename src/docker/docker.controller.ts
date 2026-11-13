@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common"
+import { Body, Controller, Get, Headers, Inject, Param, Post } from "@nestjs/common"
 import Docker from "dockerode"
 import { DOCKER_CLIENT } from "./docker.constants"
 import { DockerOperationsService } from "./docker-operations.service"
 import { DockerService } from "./docker.service"
 import { RecreateDto } from "./dto/recreate.dto"
 import { UpdateDto } from "./dto/update.dto"
+import { decodeAgentRegistryAuthHeader } from "./registry-auth.util"
 
 @Controller("agent/v1")
 export class DockerController {
@@ -42,17 +43,31 @@ export class DockerController {
   }
 
   @Get("containers/:name/update-check")
-  async updateCheck(@Param("name") name: string) {
-    return this.operations.updateCheck(name)
+  async updateCheck(
+    @Param("name") name: string,
+    @Headers("x-docksentinel-registry-auth") registryAuthHeader?: string,
+  ) {
+    const authEntries = decodeAgentRegistryAuthHeader(registryAuthHeader)
+    return this.operations.updateCheck(name, authEntries)
   }
 
   @Post("containers/:name/recreate")
-  async recreate(@Param("name") name: string, @Body() body: RecreateDto) {
-    return this.operations.recreateContainer(name, body ?? {})
+  async recreate(
+    @Param("name") name: string,
+    @Body() body: RecreateDto,
+    @Headers("x-docksentinel-registry-auth") registryAuthHeader?: string,
+  ) {
+    const authEntries = decodeAgentRegistryAuthHeader(registryAuthHeader)
+    return this.operations.recreateContainer(name, body ?? {}, authEntries)
   }
 
   @Post("containers/:name/update")
-  async updateContainer(@Param("name") name: string, @Body() body: UpdateDto) {
-    return this.operations.updateContainer(name, body ?? {})
+  async updateContainer(
+    @Param("name") name: string,
+    @Body() body: UpdateDto,
+    @Headers("x-docksentinel-registry-auth") registryAuthHeader?: string,
+  ) {
+    const authEntries = decodeAgentRegistryAuthHeader(registryAuthHeader)
+    return this.operations.updateContainer(name, body ?? {}, authEntries)
   }
 }
